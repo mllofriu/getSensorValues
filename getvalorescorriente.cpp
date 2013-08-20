@@ -19,6 +19,7 @@
 #include <boost/bind.hpp>
 #include <iostream>
 #include <fstream>
+
 using namespace std;
 
 std::string sensorsToRecord[] = {"Device/SubDeviceList/RHipPitch/Position/Sensor/Value",
@@ -34,6 +35,18 @@ std::string sensorsToRecord[] = {"Device/SubDeviceList/RHipPitch/Position/Sensor
                                  "Device/SubDeviceList/LHipRoll/ElectricCurrent/Sensor/Value",
                                  "Device/SubDeviceList/RHipYawPitch/ElectricCurrent/Sensor/Value",
                                  "Device/SubDeviceList/LHipYawPitch/ElectricCurrent/Sensor/Value",
+                                 "Device/SubDeviceList/LKneePitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RKneePitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RAnkleRoll/Position/Sensor/Value",
+                                 "Device/SubDeviceList/LAnkleRoll/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RAnklePitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/LAnklePitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RHipPitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/LHipPitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RHipRoll/Position/Sensor/Value",
+                                 "Device/SubDeviceList/LHipRoll/Position/Sensor/Value",
+                                 "Device/SubDeviceList/RHipYawPitch/Position/Sensor/Value",
+                                 "Device/SubDeviceList/LHipYawPitch/Position/Sensor/Value",
                                  "Device/SubDeviceList/InertialSensor/AccX/Sensor/Value",
                                  "Device/SubDeviceList/InertialSensor/AccY/Sensor/Value",
                                  "Device/SubDeviceList/InertialSensor/GyrX/Sensor/Value",
@@ -49,7 +62,7 @@ std::string sensorsToRecord[] = {"Device/SubDeviceList/RHipPitch/Position/Sensor
 /// <param name="broker"> A smart pointer to the broker.</param>
 /// <param name="name">   The name of the module. </param>
 GetValoresCorriente::GetValoresCorriente(boost::shared_ptr<AL::ALBroker> broker,
-                                         const std::string &name )
+                                         const std::string &name)
     : AL::ALModule(broker, name )
     , fMemoryFastAccess(boost::shared_ptr<AL::ALMemoryFastAccess>(new AL::ALMemoryFastAccess()))
 {
@@ -64,8 +77,8 @@ GetValoresCorriente::GetValoresCorriente(boost::shared_ptr<AL::ALBroker> broker,
 
     // hack para evitar excepcion de boost
     // TODO: averiguar como sacar esto
-    startAcquiring("~/currentValues.data");
-    stopAcquiring();
+    //    startAcquiring("~/currentValues.data");
+    //    stopAcquiring();
 }
 
 GetValoresCorriente::~GetValoresCorriente()
@@ -74,10 +87,8 @@ GetValoresCorriente::~GetValoresCorriente()
 }
 
 // Start the example
-void GetValoresCorriente::startAcquiring(const std::string &fileName)
+void GetValoresCorriente::startAcquiring(const std::string &sensorFileName, const std::string &dumpFileName)
 {
-    dumpFile.open (fileName.c_str());
-
     signed long isDCMRunning;
 
     try
@@ -105,28 +116,144 @@ void GetValoresCorriente::startAcquiring(const std::string &fileName)
         throw ALERROR(getName(), "startLoop()", "Error no DCM running ");
     }
 
-    init();
+    init(sensorFileName, dumpFileName);
     connectToDCMloop();
 }
 
 // Stop the example
 void GetValoresCorriente::stopAcquiring()
 {
-    setStiffness(0.0f);
+    //setStiffness(0.0f);
     // Close file
-    if (dumpFile != 0)
+    if (dumpFile.is_open())
         dumpFile.close();
+
     // Remove the postProcess call back connection
     fDCMPostProcessConnection.disconnect();
 }
 
 // Initialisation of ALmemory fast access, DCM commands, Alias, stiffness, ...
-void GetValoresCorriente::init()
+void GetValoresCorriente::init(const std::string &sensorFileName, const std::string &dumpFileName)
 {
-    initFastAccess();
+    dumpFile.open(dumpFileName.c_str());
+
+    initFastAccess(sensorFileName);
     createPositionActuatorAlias();
     createHardnessActuatorAlias();
-    setStiffness(0.2f); // Set to 1.0 for maximum stiffness, but only after a test
+    //setStiffness(0.2f); // Set to 1.0 for maximum stiffness, but only after a test
+}
+
+
+
+// ALMemory fast access
+void GetValoresCorriente::initFastAccess(const std::string &sensorFileName)
+{
+    // Read sensor keys from a file
+    std::vector<std::string> fSensorKeys;
+    ifstream sensorFile;
+    sensorFile.open(sensorFileName.c_str());
+    string line;
+    if (sensorFile.is_open())
+    {
+        while ( sensorFile.good() )
+        {
+            getline (sensorFile,line);
+            fSensorKeys.push_back(line);
+        }
+    } else cout << "GetValoresCorriente: Unable to open file";
+    sensorFile.close();
+
+
+    // Create the fast memory access
+    fMemoryFastAccess->ConnectToVariables(getParentBroker(), fSensorKeys, false);
+}
+
+void GetValoresCorriente::setStiffness(const float &stiffnessValue)
+{
+    AL::ALValue stiffnessCommands;
+    int DCMtime;
+    // increase stiffness with the "jointStiffness" Alias created at initialisation
+    try
+    {
+        // Get time : return the time in 1 seconde
+        DCMtime = dcmProxy->getTime(1000);
+    }
+    catch (const AL::ALError &e)
+    {
+        throw ALERROR(getName(), "setStiffness()", "Error on DCM getTime : " + e.toString());
+    }
+
+    // Prepare one dcm command:
+    // it will linearly "Merge" all joint stiffness
+    // from last value to "stiffnessValue" in 1 seconde
+    stiffnessCommands.arraySetSize(3);
+    stiffnessCommands[0] = std::string("jointStiffness");
+    stiffnessCommands[1] = std::string("Merge");
+    stiffnessCommands[2].arraySetSize(1);
+    stiffnessCommands[2][0].arraySetSize(2);
+    stiffnessCommands[2][0][0] = stiffnessValue;
+    stiffnessCommands[2][0][1] = DCMtime;
+    try
+    {
+        dcmProxy->set(stiffnessCommands);
+    }
+    catch (const AL::ALError &e)
+    {
+        throw ALERROR(getName(), "setStiffness()", "Error when sending stiffness to DCM : " + e.toString());
+    }
+}
+
+void GetValoresCorriente::connectToDCMloop()
+{
+    // Get all values from ALMemory using fastaccess
+    fMemoryFastAccess->GetValues(sensorValues);
+
+    // Connect callback to the DCM post proccess
+    try
+    {
+        fDCMPostProcessConnection =
+                getParentBroker()->getProxy("DCM")->getModule()->atPostProcess(boost::bind(&GetValoresCorriente::synchronisedDCMcallback, this));
+    }
+    catch (const AL::ALError &e)
+    {
+        throw ALERROR(getName(), "connectToDCMloop()", "Error when connecting to DCM postProccess: " + e.toString());
+    }
+}
+
+
+/**
+ *  WARNING
+ *
+ *  Once this method is connected to DCM postprocess
+ *  it will be called in Real Time every 10 milliseconds from DCM thread
+ *  Dynamic allocation and system call are strictly forbidden in this method
+ *  Computation time in this section must remain as short as possible to prevent
+ *  erratic move or joint getting loose.
+ *
+ */
+//  Send the new values of all joints to the DCM.
+//  Note : a joint could be ignore unsing a NAN value.
+//  Note : do not forget to set stiffness
+void GetValoresCorriente::synchronisedDCMcallback()
+{
+    int DCMtime;
+
+    try
+    {
+        // Get absolute time, at 0 ms in the future ( i.e. now )
+        DCMtime = dcmProxy->getTime(0);
+    }
+    catch (const AL::ALError &e)
+    {
+        throw ALERROR(getName(), "synchronisedDCMcallback()", "Error on DCM getTime : " + e.toString());
+    }
+
+    fMemoryFastAccess->GetValues(sensorValues);
+
+    dumpFile << DCMtime;
+    for (std::vector<float>::iterator it = sensorValues.begin() ; it != sensorValues.end(); ++it)
+        dumpFile << ' ' << *it;
+    dumpFile << '\n';
 }
 
 void GetValoresCorriente::createPositionActuatorAlias()
@@ -221,103 +348,4 @@ void GetValoresCorriente::createHardnessActuatorAlias()
     {
         throw ALERROR(getName(), "createHardnessActuatorAlias()", "Error when creating Alias : " + e.toString());
     }
-}
-
-// ALMemory fast access
-void GetValoresCorriente::initFastAccess()
-{
-    // build vector with values defined in the header file
-    // Sensors names
-    std::vector<std::string> fSensorKeys(sensorsToRecord, sensorsToRecord + sizeof(sensorsToRecord) / sizeof(std::string));
-
-    // Create the fast memory access
-    fMemoryFastAccess->ConnectToVariables(getParentBroker(), fSensorKeys, false);
-}
-
-void GetValoresCorriente::setStiffness(const float &stiffnessValue)
-{
-    AL::ALValue stiffnessCommands;
-    int DCMtime;
-    // increase stiffness with the "jointStiffness" Alias created at initialisation
-    try
-    {
-        // Get time : return the time in 1 seconde
-        DCMtime = dcmProxy->getTime(1000);
-    }
-    catch (const AL::ALError &e)
-    {
-        throw ALERROR(getName(), "setStiffness()", "Error on DCM getTime : " + e.toString());
-    }
-
-    // Prepare one dcm command:
-    // it will linearly "Merge" all joint stiffness
-    // from last value to "stiffnessValue" in 1 seconde
-    stiffnessCommands.arraySetSize(3);
-    stiffnessCommands[0] = std::string("jointStiffness");
-    stiffnessCommands[1] = std::string("Merge");
-    stiffnessCommands[2].arraySetSize(1);
-    stiffnessCommands[2][0].arraySetSize(2);
-    stiffnessCommands[2][0][0] = stiffnessValue;
-    stiffnessCommands[2][0][1] = DCMtime;
-    try
-    {
-        dcmProxy->set(stiffnessCommands);
-    }
-    catch (const AL::ALError &e)
-    {
-        throw ALERROR(getName(), "setStiffness()", "Error when sending stiffness to DCM : " + e.toString());
-    }
-}
-
-void GetValoresCorriente::connectToDCMloop()
-{
-    // Get all values from ALMemory using fastaccess
-    fMemoryFastAccess->GetValues(sensorValues);
-
-    // Connect callback to the DCM post proccess
-    try
-    {
-        fDCMPostProcessConnection =
-                getParentBroker()->getProxy("DCM")->getModule()->atPostProcess(boost::bind(&GetValoresCorriente::synchronisedDCMcallback, this));
-    }
-    catch (const AL::ALError &e)
-    {
-        throw ALERROR(getName(), "connectToDCMloop()", "Error when connecting to DCM postProccess: " + e.toString());
-    }
-}
-
-
-/**
- *  WARNING
- *
- *  Once this method is connected to DCM postprocess
- *  it will be called in Real Time every 10 milliseconds from DCM thread
- *  Dynamic allocation and system call are strictly forbidden in this method
- *  Computation time in this section must remain as short as possible to prevent
- *  erratic move or joint getting loose.
- *
- */
-//  Send the new values of all joints to the DCM.
-//  Note : a joint could be ignore unsing a NAN value.
-//  Note : do not forget to set stiffness
-void GetValoresCorriente::synchronisedDCMcallback()
-{
-    int DCMtime;
-
-    try
-    {
-        // Get absolute time, at 0 ms in the future ( i.e. now )
-        DCMtime = dcmProxy->getTime(0);
-    }
-    catch (const AL::ALError &e)
-    {
-        throw ALERROR(getName(), "synchronisedDCMcallback()", "Error on DCM getTime : " + e.toString());
-    }
-
-    fMemoryFastAccess->GetValues(sensorValues);
-
-    dumpFile << DCMtime;
-    for (std::vector<float>::iterator it = sensorValues.begin() ; it != sensorValues.end(); ++it)
-        dumpFile << ' ' << *it;
-    dumpFile << '\n';
 }

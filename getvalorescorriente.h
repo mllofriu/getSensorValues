@@ -27,11 +27,11 @@ class GetValoresCorriente : public AL::ALModule
 {
 public:
     GetValoresCorriente(boost::shared_ptr<AL::ALBroker> pBroker,
-                        const std::string &pName );
+                        const std::string &pName);
 
     virtual ~GetValoresCorriente();
 
-    void startAcquiring(const std::string &fileName);
+    void startAcquiring(const std::string &sensorFileName, const std::string &dumpFileName);
 
     void stopAcquiring();
 
@@ -40,10 +40,10 @@ public:
 private:
 
   // Initialisation of ALMemory/DCM link
-  void init();
+  void init(const std::string &sensorFileName, const std::string &dumpFileName);
 
   // ALMemory fast access
-  void initFastAccess();
+  void initFastAccess(const std::string &sensorFileName);
 
   //  Connect callback to the DCM post proccess
   void connectToDCMloop();
